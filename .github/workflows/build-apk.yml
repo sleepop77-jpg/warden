@@ -12,12 +12,16 @@ permissions:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build Warden APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
-      - name: Checkout source code
+      - name: Checkout source
         uses: actions/checkout@v4
 
       - name: Set up Java 17
@@ -27,28 +31,51 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Find Android SDK manager
+        id: sdk
+        shell: bash
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" \
+            -type f -name sdkmanager -print -quit)"
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: Android SDK manager not found."
+            exit 1
+          fi
+
+          echo "sdkmanager=$SDKMANAGER" >> "$GITHUB_OUTPUT"
+          echo "Found SDK manager: $SDKMANAGER"
+
+      - name: Accept Android SDK licences
+        shell: bash
+        run: |
+          yes | "${{ steps.sdk.outputs.sdkmanager }}" --licenses \
+            || true
 
       - name: Install Android SDK packages
+        shell: bash
         run: |
-          sdkmanager --install \
+          "${{ steps.sdk.outputs.sdkmanager }}" --install \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
 
-      - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
+      - name: Check Gradle wrapper
+        run: |
+          if [ ! -f ./gradlew ]; then
+            echo "ERROR: gradlew not found in repository root."
+            exit 1
+          fi
+          chmod +x ./gradlew
 
       - name: Build debug APK
         run: ./gradlew --no-daemon assembleDebug
 
-      - name: Locate generated APK
-        run: |
-          echo "Searching for generated APK files..."
-          find . -type f -name "*.apk" -print
+      - name: Find APK files
+        if: success()
+        run: find . -type f -name "*.apk" -print
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: warden-debug-apk
